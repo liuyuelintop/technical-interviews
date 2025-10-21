@@ -106,7 +106,8 @@ Create file: `lib/api.ts`
 import { User } from '@/types';
 
 export async function fetchUsers(): Promise<User[]> {
-  const response = await fetch('https://randomuser.me/api/?results=50');
+  // Use a fixed seed to keep the dataset stable across refetches/reloads
+  const response = await fetch('https://randomuser.me/api/?results=50&seed=user-directory');
 
   if (!response.ok) {
     throw new Error('Failed to fetch users');
@@ -116,7 +117,8 @@ export async function fetchUsers(): Promise<User[]> {
 
   // Transform API data inline
   return data.results.map((apiUser: any) => ({
-    id: apiUser.email,
+    // Prefer randomuser's stable unique id
+    id: apiUser.login.uuid,
     email: apiUser.email,
     name: {
       first: apiUser.name.first,
@@ -131,10 +133,10 @@ export async function fetchUsers(): Promise<User[]> {
 }
 ```
 
-**What you're doing:** Fetching from API and transforming data inline.
+**What you're doing:** Fetching from API and transforming data inline. Using a `seed` makes results deterministic, and `login.uuid` is a stable unique identifier.
 
 **What to say:**
-> "I'm transforming API data inline here with any type. In production I'd add runtime validation with zod, create proper API types, and handle edge cases. But this gets us moving quickly."
+> "I'm transforming API data inline here with any type. I'm also seeding the API and using a stable id (`login.uuid`) to avoid data drift issues later when we add favorites. In production I'd add runtime validation with zod, create proper API types, and handle edge cases. But this gets us moving quickly."
 
 ---
 
@@ -152,14 +154,23 @@ export function useUsers() {
   return useQuery({
     queryKey: ['users'],
     queryFn: fetchUsers,
+    // Stability over surprise refetches
+    staleTime: 30 * 60 * 1000, // 30 minutes: data considered fresh
+    refetchOnWindowFocus: false, // don't refetch when tab regains focus
+    refetchOnReconnect: false,   // don't refetch automatically on reconnect
   });
 }
 ```
 
-**What you're doing:** Creating a simple hook that uses React Query.
+**What you're doing:** Creating a simple hook that uses React Query with stability‑oriented options.
 
 **What to say:**
-> "Using React Query for server state. This gives us caching, loading states, and refetching for free."
+> "Using React Query for server state. I set a 30‑minute `staleTime` so data stays fresh and won’t auto‑refetch during typical usage, and I disabled refetch on window focus/reconnect to avoid surprise dataset swaps while we’re in the app. We can always trigger a manual refresh if needed."
+
+**Quick primer on these options (React Query v5):**
+- `staleTime`: How long data is considered fresh. While fresh, React Query won’t auto‑refetch on mount/focus/reconnect. After 30 minutes it becomes stale and is eligible for refetch.
+- `refetchOnWindowFocus` / `refetchOnReconnect`: Disables implicit refetches tied to browser focus/network changes. This prevents unexpected dataset changes mid‑session.
+- Note: Fresh vs. stale is not cache eviction. Cache GC is controlled by `gcTime` (default keeps unused queries for a short time). You can increase it if you need longer retention across unmounts.
 
 ---
 
@@ -860,8 +871,8 @@ create separate API response types and a dedicated transformer with validation,
 but this gets us moving quickly.
 
 Using React Query gives us caching, loading states, and automatic refetching
-for free. I'm using default configuration now but would tune staleTime and
-retry logic based on requirements."
+for free. Here I tune `staleTime` and disable refetch on focus/reconnect to
+favor stability; we can always trigger a manual refresh if needed."
 ```
 
 ---
@@ -909,6 +920,12 @@ I'm adding a useFavorites hook that manages favorites state and syncs with
 localStorage. In production I'd add error handling for QuotaExceeded and
 validate the data on load."
 ```
+
+**Favorites stability tip:**
+- Persisting favorites across sessions means your client state must align with server data lifecycles.
+- Use deterministic server data (seeded API) and a stable identifier (`login.uuid`).
+- Compute the favorites badge/count as the intersection of stored favorite IDs and the currently loaded users to avoid mismatch.
+- Provide a visible `Refresh` action (manual `refetch`) if you want controlled updates without surprise refetches.
 
 ---
 
@@ -985,6 +1002,28 @@ understand the architectural principles behind what I would do differently."
 - Check that you're using `localStorage.setItem` in useEffect
 - Make sure you're not in incognito mode (localStorage disabled)
 - Check browser console for errors
+
+---
+
+## Issue: Favorites vs Data Mismatch
+
+**Symptoms:**
+- Favorites badge shows a number larger than visible favorites.
+- Favorites tab appears empty even though there are saved favorites.
+
+**Root cause:**
+- `randomuser.me` without a `seed` returns a different sample on each fetch.
+- React Query defaults may refetch on focus/reconnect, swapping the dataset.
+- `useFavorites` persists IDs across sessions; when the dataset changes, many IDs no longer exist in the current results.
+
+**Fix (this tutorial’s approach):**
+- Stabilize the dataset with a fixed `seed` and use `login.uuid` as `User.id`.
+- Tame refetching with `staleTime` and disable refetch on window focus/reconnect.
+- Compute favorites badge/count as the intersection of `favoriteIds` and current `users`.
+
+**Optional alternatives:**
+- Prune missing favorite IDs when the dataset changes, or label them as "missing".
+- Persist lightweight user snapshots with each favorite so they can render even if absent from the current dataset.
 
 ---
 
