@@ -109,12 +109,14 @@ export interface User {
 import { User } from '@/types';
 
 export async function fetchUsers(): Promise<User[]> {
-  const response = await fetch('https://randomuser.me/api/?results=50');
+  // Use a fixed seed to keep the dataset stable across refetches/reloads
+  const response = await fetch('https://randomuser.me/api/?results=50&seed=user-directory');
   const data = await response.json();
 
   // Transform inline - don't create separate transformer yet
   return data.results.map((apiUser: any) => ({
-    id: apiUser.email,
+    // Prefer randomuser's stable unique id
+    id: apiUser.login.uuid,
     email: apiUser.email,
     name: {
       first: apiUser.name.first,
@@ -130,7 +132,7 @@ export async function fetchUsers(): Promise<User[]> {
 ```
 
 **What to say:**
-> "I'm transforming API data inline here with any type. In production I'd add runtime validation with zod or similar, create proper API types, and handle edge cases like null values. But this gets us moving quickly."
+> "I'm transforming API data inline here with any type. I'm also seeding the API and using a stable id (`login.uuid`) to avoid data drift issues later when we add favorites. In production I'd add runtime validation with zod or similar, create proper API types, and handle edge cases like null values. But this gets us moving quickly."
 
 ```typescript
 // hooks/useUsers.ts
@@ -141,12 +143,16 @@ export function useUsers() {
   return useQuery({
     queryKey: ['users'],
     queryFn: fetchUsers,
+    // Stability over surprise refetches
+    staleTime: 30 * 60 * 1000, // 30 minutes: data considered fresh
+    refetchOnWindowFocus: false, // don't refetch when tab regains focus
+    refetchOnReconnect: false,   // don't refetch automatically on reconnect
   });
 }
 ```
 
 **What to say:**
-> "Using React Query for server state. This gives us caching, loading states, and refetching for free. I'm using default options now, but I'd configure staleTime, retry logic, etc. in production."
+> "Using React Query for server state. I set a 30-minute `staleTime` so data stays fresh and won't auto-refetch during typical usage, and I disabled refetch on window focus/reconnect to avoid surprise dataset swaps while we're in the app. We can always trigger a manual refresh if needed."
 
 ```typescript
 // app/providers.tsx
@@ -435,6 +441,8 @@ const { favoriteIds, toggleFavorite, isFavorite } = useFavorites();
 
 **Say:** "Adding favorites with localStorage persistence. In production I'd add validation and handle QuotaExceeded errors."
 
+**Note on data stability:** Because we're using a seeded API and stable user IDs (`login.uuid`), favorites will persist correctly across sessions. Without these, random API data would cause favorite IDs to become orphaned when the dataset changes.
+
 ---
 
 ### Option C: Better Error Handling (if interviewer mentioned it) (10 min)
@@ -620,10 +628,12 @@ with runtime validation using zod or similar.
 
 The transformation is simple - mapping the API's nested structure to our flatter
 User interface. I'm computing the full name here since we'll use it for display.
+I'm also seeding the API and using login.uuid as the stable identifier to avoid
+data drift when we add favorites later.
 
 Using React Query for data fetching gives us caching, loading states, and
-automatic refetching. I'm using default configuration now, but I'd tune the
-staleTime and retry logic based on requirements."
+automatic refetching. Here I tune `staleTime` and disable refetch on focus/reconnect
+to favor stability; we can always trigger a manual refresh if needed."
 ```
 
 **Why this works:**
